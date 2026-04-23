@@ -126,6 +126,7 @@
 
                 <data android:scheme="http" />
                 <data android:scheme="https" />
+                <!-- Keep compatibility with 洛雪音源 deep links -->
                 <data android:scheme="lxmusic" />
             </intent-filter>
         </activity>
