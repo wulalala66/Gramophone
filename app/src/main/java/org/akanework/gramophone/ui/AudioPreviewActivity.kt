@@ -325,16 +325,17 @@ class AudioPreviewActivity : BaseActivity(), View.OnClickListener {
         scope.launch {
             if (intent.action == Intent.ACTION_VIEW) {
                 intent.data?.let { uri ->
-                    Log.i(TAG, "Audio preview opening $uri")
+                    val (resolvedUri, resolvedMeta) = resolveExternalSourceUri(uri)
+                    Log.i(TAG, "Audio preview opening $uri (resolved=$resolvedUri)")
                     var fileUri: Uri? = null
-                    val queryUri = if (uri.scheme == "file") {
-                        fileUri = uri
+                    val queryUri = if (resolvedUri.scheme == "file") {
+                        fileUri = resolvedUri
                         null
-                    } else if (uri.scheme == "content" && uri.host == MediaStore.AUTHORITY)
-                        uri
-                    else if (uri.scheme == "content")
+                    } else if (resolvedUri.scheme == "content" && resolvedUri.host == MediaStore.AUTHORITY)
+                        resolvedUri
+                    else if (resolvedUri.scheme == "content")
                         try {
-                            if (hasScopedStorageV1()) MediaStore.getMediaUri(this@AudioPreviewActivity, uri) else null
+                            if (hasScopedStorageV1()) MediaStore.getMediaUri(this@AudioPreviewActivity, resolvedUri) else null
                         } catch (e: Exception) {
                             if (e is SecurityException || e.message == "Provider for this Uri is not supported."
                                 || e.message?.startsWith("Invalid URI: ") == true
@@ -345,12 +346,12 @@ class AudioPreviewActivity : BaseActivity(), View.OnClickListener {
                                 Log.e(TAG, Log.getThrowableString(e)!!)
                             null
                         } ?: run {
-                            val lp = Uri.decode(uri.lastPathSegment)
+                            val lp = Uri.decode(resolvedUri.lastPathSegment)
                             if (lp?.toUri()?.scheme == "file") { // Let's try our luck! Material Files supports this
                                 fileUri = lp.toUri()
                             } else { // ¯\_(ツ)_/¯
                                 val pfd = try {
-                                    contentResolver.openFileDescriptor(uri, "r")
+                                    contentResolver.openFileDescriptor(resolvedUri, "r")
                                 } catch (e: Exception) {
                                     Log.e(TAG, Log.getThrowableString(e)!!)
                                     null
@@ -373,7 +374,7 @@ class AudioPreviewActivity : BaseActivity(), View.OnClickListener {
                             null
                         }
                     else null
-                    Log.i(TAG, "Audio preview opening $uri with query=$queryUri file=$fileUri")
+                    Log.i(TAG, "Audio preview opening $uri with query=$queryUri file=$fileUri resolved=$resolvedUri")
                     val cursor = if (queryUri != null || fileUri != null) contentResolver.query(
                         queryUri ?: MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
                         arrayOf(
@@ -428,7 +429,15 @@ class AudioPreviewActivity : BaseActivity(), View.OnClickListener {
                                 "Audio preview found no data for query=$queryUri file=$fileUri (was uri=$uri)"
                             )
                         }
-                        mediaItem.setUri(fileUri ?: queryUri ?: uri)
+                        mediaItem.setUri(fileUri ?: queryUri ?: resolvedUri)
+                        if (resolvedMeta.title != null || resolvedMeta.artist != null) {
+                            mediaItem.setMediaMetadata(
+                                MediaMetadata.Builder()
+                                    .setTitle(resolvedMeta.title)
+                                    .setArtist(resolvedMeta.artist)
+                                    .build()
+                            )
+                        }
                     }
                     cursor?.close()
                     withContext(Dispatchers.Main) {
@@ -454,6 +463,24 @@ class AudioPreviewActivity : BaseActivity(), View.OnClickListener {
                 }
             }
         }
+    }
+
+    private data class ResolvedMeta(
+        val title: String? = null,
+        val artist: String? = null
+    )
+
+    private fun resolveExternalSourceUri(input: Uri): Pair<Uri, ResolvedMeta> {
+        if (input.scheme != "lxmusic") return input to ResolvedMeta()
+        val url = input.getQueryParameter("url")
+            ?: input.getQueryParameter("musicUrl")
+            ?: input.getQueryParameter("sourceUrl")
+            ?: return input to ResolvedMeta()
+        val resolved = Uri.decode(url).toUri()
+        return resolved to ResolvedMeta(
+            title = input.getQueryParameter("name") ?: input.getQueryParameter("title"),
+            artist = input.getQueryParameter("artist")
+        )
     }
 
     override fun onClick(v: View?) {
